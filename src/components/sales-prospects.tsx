@@ -35,7 +35,15 @@ export function SalesProspects() {
   const [message,setMessage] = useState("");
   const [selectedId,setSelectedId] = useState<string | null>(null);
   const [draft,setDraft] = useState("");
+  const [template,setTemplate] = useState("أهلاً بحضرتك، شكراً لسماحكم بالتواصل بخصوص LoungeLink POS لـ {business}. السيستم بيساعد في إدارة وقت اللعب والغرف والحسابات والمخزون والمصروفات بدون اشتراك شهري إجباري. لو مناسب لحضرتك ممكن نرتب ديمو مجاني؟");
+  const [campaignIds,setCampaignIds] = useState<string[]>([]);
+  const [handledIds,setHandledIds] = useState<string[]>([]);
   const selected = rows.find(p=>p.id===selectedId);
+  const eligible = rows.filter(p=>p.status==="New"&&canOpenWhatsApp(p));
+  const pending = campaignIds.map(id=>rows.find(p=>p.id===id)).filter((p): p is Prospect=>!!p && p.status==="New" && canOpenWhatsApp(p) && !handledIds.includes(p.id));
+  function personalize(p: Prospect){return template.replaceAll("{business}",p.name).replaceAll("{area}",p.area);}
+  function openDraft(p: Prospect){setSelectedId(p.id);setDraft(personalize(p));}
+  function finishDraft(sent: boolean){if(!selected)return;if(sent&&canOpenWhatsApp(selected)&&selected.status==="New"){setRows(prev=>prev.map(p=>p.id===selected.id?{...p,status:"Contacted"}:p));}setHandledIds(prev=>prev.includes(selected.id)?prev:[...prev,selected.id]);setSelectedId(null);setDraft("");}
   useEffect(()=>{
     try { const stored=JSON.parse(localStorage.getItem(KEY)||"[]"); if(Array.isArray(stored))setRows(stored.filter(valid)); }
     catch { setMessage("Saved prospect data could not be read."); }
@@ -70,6 +78,18 @@ export function SalesProspects() {
       <button type="button" disabled={!rows.length} onClick={download} className="rounded-xl bg-ink-950 text-white px-4 py-2 text-sm disabled:opacity-50">Export prospect tracker</button>
     </div>
     {message&&<p role="status" className="text-sm text-ink-700">{message}</p>}
+    <section className="rounded-2xl border bg-sand-50 p-4 space-y-3">
+      <h3 className="font-semibold text-lg">Outreach campaign composer</h3>
+      <p className="text-sm text-ink-700">Prepare one template for opted-in prospects. Use {"{business}"} and {"{area}"} for personalization. No automatic messages are sent; verify each recipient and send inside WhatsApp.</p>
+      <textarea aria-label="Campaign message template" dir="auto" rows={4} maxLength={1500} className="w-full rounded-xl border p-3 text-sm" value={template} onChange={e=>setTemplate(e.target.value)}/>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">{[["Opted-in new",eligible.length],["Selected",campaignIds.length],["Reviewed / skipped",handledIds.filter(id=>campaignIds.includes(id)).length],["Ready to review",pending.length]].map(([label,value])=><div key={label} className="rounded-lg border bg-white p-3"><p className="text-xs">{label}</p><strong className="text-lg">{value}</strong></div>)}</div>
+      <div role="progressbar" aria-label="Campaign reviews processed" aria-valuenow={campaignIds.length?Math.round(handledIds.filter(id=>campaignIds.includes(id)).length/campaignIds.length*100):0} aria-valuemin={0} aria-valuemax={100} className="h-2 bg-black/10 rounded-full overflow-hidden"><div className="h-full bg-emerald-600" style={{width:(campaignIds.length?Math.round(handledIds.filter(id=>campaignIds.includes(id)).length/campaignIds.length*100):0)+"%"}}/></div>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" disabled={!eligible.length||!template.trim()||!!selected} onClick={()=>{setCampaignIds(eligible.map(p=>p.id));setHandledIds([]);}} className="rounded-lg border px-4 py-2 text-sm disabled:opacity-40">Prepare opted-in queue</button>
+        <button type="button" disabled={!pending.length||!!selected||!template.trim()} onClick={()=>openDraft(pending[0]!)} className="rounded-lg bg-emerald-700 text-white px-4 py-2 text-sm disabled:opacity-40">Review next message</button>
+      </div>
+      <p className="text-xs text-ink-700">Queue progress counts reviews, not deliveries. Confirm sent only after you actually send a message. Declined, won and do-not-contact records remain excluded.</p>
+    </section>
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
       {[["Prospects",rows.length],["Contacted / progressed",rows.filter(p=>!["New","Do not contact"].includes(p.status)).length],["Interested / demo",rows.filter(p=>["Interested","Demo booked"].includes(p.status)).length],["Won",rows.filter(p=>p.status==="Won").length]].map(([label,count])=><div key={label} className="rounded-xl border p-3"><div className="text-xs">{label}</div><strong>{count}</strong></div>)}
     </div>
@@ -85,8 +105,7 @@ export function SalesProspects() {
             <input className="w-full border rounded p-1 mt-1" value={p.whatsappConsent??""} placeholder="Not granted" maxLength={300} disabled={["Do not contact","Not interested","Won"].includes(p.status)} onChange={e=>update(p.id,{whatsappConsent:e.target.value})}/>
           </label>
           <button type="button" disabled={!canOpenWhatsApp(p)} className="mt-2 rounded-lg bg-emerald-700 text-white px-3 py-2 text-xs disabled:opacity-40" onClick={()=>{
-            setSelectedId(p.id);
-            setDraft("أهلاً بحضرتك، شكراً لسماحكم بالتواصل بخصوص LoungeLink POS لـ "+p.name+". السيستم بيساعد في إدارة وقت اللعب والغرف والحسابات والمخزون والمصروفات، من غير اشتراك شهري إجباري. لو مناسب لحضرتك، ممكن نرتب ديمو مجاني؟");
+            openDraft(p);
           }}>Prepare WhatsApp draft</button>
           {!egyptWhatsAppNumber(p.phone)&&<p className="text-xs">Egyptian mobile number required; verify separately.</p>}
         </td>
@@ -98,6 +117,8 @@ export function SalesProspects() {
       <textarea dir="auto" className="w-full rounded border p-2 text-sm" rows={5} maxLength={1500} value={draft} onChange={e=>setDraft(e.target.value)}/>
       <div className="flex flex-wrap gap-2 items-center">
         {canOpenWhatsApp(selected)&&draft.trim()&&<a className="rounded-lg bg-emerald-700 px-3 py-2 text-white text-sm" href={"https://wa.me/"+egyptWhatsAppNumber(selected.phone)+"?text="+encodeURIComponent(draft)} target="_blank" rel="noopener noreferrer">Open WhatsApp — review and send</a>}
+        <button type="button" disabled={!canOpenWhatsApp(selected)||!draft.trim()||selected.status!=="New"} className="rounded-lg bg-ink-950 text-white px-3 py-2 text-sm disabled:opacity-40" onClick={()=>{if(window.confirm("Have you actually sent the reviewed message in WhatsApp?"))finishDraft(true);}}>Confirm sent manually</button>
+        <button type="button" className="border rounded px-3 py-2 text-sm" onClick={()=>finishDraft(false)}>Skip for now</button>
         <button type="button" className="border rounded px-3 py-2 text-sm" onClick={()=>{setSelectedId(null);setDraft("");}}>Close</button>
       </div>
     </section>}
