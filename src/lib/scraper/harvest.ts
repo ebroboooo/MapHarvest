@@ -108,9 +108,11 @@ function scoreLead(lead: {
   phone?: string;
   website?: string;
   email?: string;
-}): number {
+}, keyword: string): number {
   let score = 50;
-  if (!lead.website) score += 20; // hot for web freelancers
+  const gaming = /playstation|gaming|بلايستيشن|ألعاب/i.test(keyword);
+  if (!gaming && !lead.website) score += 20; // website availability only, not buyer intent
+  if (gaming && lead.phone) score += 20;
   if (lead.phone) score += 15;
   if (lead.website) score += 10;
   if (lead.email) score += 15;
@@ -351,9 +353,7 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
       locale: "en-US",
       viewport: { width: 1365, height: 900 },
     });
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-    });
+    // Do not mask browser automation or bypass access restrictions.
 
     const pages: Page[] = [];
     for (let i = 0; i < workers; i++) {
@@ -437,7 +437,7 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
             mapsUrl: card.href,
             placeKey: card.placeKey,
             searchQuery: card.searchQuery,
-            score: scoreLead(detail),
+            score: scoreLead(detail, keyword),
             collectedAt: new Date().toISOString(),
           };
           out.push(lead);
