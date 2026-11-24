@@ -450,7 +450,7 @@ export function HarvestApp() {
           </div>
         </section>
       ) : null}
-      <SalesProspects />
+      <SalesProspects discovered={job?.leads ?? []} />
     </div>
   );
 }
