@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ProgressBar } from "@/components/progress-bar";
+import { SalesProspects } from "@/components/sales-prospects";
 import { COUNTRY_OPTIONS, NICHE_OPTIONS } from "@/lib/scraper/locations";
 import type { ContactMode, HarvestJob } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,11 +16,11 @@ const CONTACT_OPTIONS: Array<{
   { value: "phone", title: "Phone", hint: "Must include phone" },
   { value: "website", title: "Website", hint: "Must include website" },
   { value: "phone_website", title: "Phone + website", hint: "Both required" },
-  { value: "no_website", title: "No website", hint: "Best freelancing leads" },
+  { value: "no_website", title: "No website", hint: "No site listed" },
   {
     value: "phone_no_website",
     title: "Phone · no website",
-    hint: "Callable + needs a site",
+    hint: "Phone listed; no site listed",
   },
 ];
 
@@ -27,6 +28,7 @@ const MAX_OPTIONS = [25, 50, 100, 250, 500, 1000];
 
 export function HarvestApp() {
   const [keyword, setKeyword] = useState("");
+  const [customKeyword, setCustomKeyword] = useState("");
   const [country, setCountry] = useState("Saudi Arabia");
   const [city, setCity] = useState("");
   const [maxResults, setMaxResults] = useState(50);
@@ -84,7 +86,8 @@ export function HarvestApp() {
 
   async function onStart(e: React.FormEvent) {
     e.preventDefault();
-    if (!keyword) {
+    const selectedKeyword = (keyword === "__custom" ? customKeyword : keyword).trim();
+    if (!selectedKeyword) {
       setError("Choose a business niche");
       return;
     }
@@ -95,7 +98,7 @@ export function HarvestApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keyword,
+          keyword: selectedKeyword,
           country,
           city: city || undefined,
           maxResults,
@@ -129,10 +132,15 @@ export function HarvestApp() {
         </h1>
         <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-ink-700/70">
           Pick a niche, location, and what contact info you need. Watch leads
-          fill live — then export CSV.
+          fill live — then export CSV. Use only data sources you have permission to collect from.
         </p>
       </header>
 
+      <div className="mb-5 rounded-xl border bg-white p-4 text-sm">
+        <strong>LoungeLink POS campaign</strong>
+        <p className="my-2">Use the sales workspace below to track verified public business listings. A listing is not a confirmed buyer.</p>
+        <button type="button" disabled={busy || running} onClick={()=>{setKeyword("playstation gaming lounge");setCountry("Egypt");setCity("Cairo");setContactMode("phone");setMaxResults(25);setWorkers(1);}} className="rounded-lg bg-ink-950 px-4 py-2 text-white disabled:opacity-50">Set LoungeLink search filters</button>
+      </div>
       <div className="grid gap-5 lg:grid-cols-[1fr_0.92fr]">
         <form
           onSubmit={onStart}
@@ -157,6 +165,7 @@ export function HarvestApp() {
                 <option value="" disabled>
                   Select niche…
                 </option>
+                <option value="__custom">Custom business keyword…</option>
                 {NICHE_OPTIONS.map((g) => (
                   <optgroup key={g.group} label={g.group}>
                     {g.items.map((item) => (
@@ -167,6 +176,7 @@ export function HarvestApp() {
                   </optgroup>
                 ))}
               </select>
+              {keyword === "__custom" && <input required maxLength={100} className="h-12 w-full rounded-xl border bg-sand-50 px-3 text-sm" placeholder="e.g. PlayStation cafe or بلايستيشن" value={customKeyword} onChange={e=>setCustomKeyword(e.target.value)}/>}
             </li>
 
             <li className="space-y-2">
@@ -420,6 +430,7 @@ export function HarvestApp() {
           </div>
         </section>
       ) : null}
+      <SalesProspects />
     </div>
   );
 }
