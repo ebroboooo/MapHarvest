@@ -16,7 +16,7 @@ function valid(value: unknown): value is Prospect {
     !!p.id && !!p.name && /^https:\/\//i.test(p.source) &&
     STATUSES.includes(p.status) && p.phone.replace(/\D/g,"").length >= 7;
 }
-const identity = (p: Prospect) => p.phone.replace(/\D/g,"") + "|" + p.name.trim().toLowerCase();
+const identity = (p: Prospect) => p.phone.replace(/\D/g,"").replace(/^20(?=1\d{9}$)/,"0") + "|" + p.name.trim().toLowerCase();
 export function SalesProspects() {
   const [rows, setRows] = useState<Prospect[]>([]);
   const [ready,setReady] = useState(false);
@@ -35,7 +35,8 @@ export function SalesProspects() {
       const data:unknown=JSON.parse(await file.text());
       if(!Array.isArray(data)||!data.every(valid))throw Error("Invalid prospect JSON");
       const unique=new Map(rows.map(p=>[identity(p),p]));
-      for(const p of data)if(!unique.has(identity(p)))unique.set(identity(p),{...p,status:"New",notes:""});
+      const ids=new Set(rows.map(p=>p.id));
+      for(const p of data)if(!unique.has(identity(p))&&!ids.has(p.id)){unique.set(identity(p),p);ids.add(p.id);}
       const next=[...unique.values()];
       setRows(next);
       setMessage("Imported "+(next.length-rows.length)+" new prospects. Existing sales notes preserved.");
