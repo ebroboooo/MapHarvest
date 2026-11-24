@@ -157,6 +157,7 @@ export const COUNTRY_OPTIONS = [
 ] as const;
 
 export const NICHE_OPTIONS = [
+  { group: "Gaming & entertainment", items: ["playstation gaming lounge", "playstation cafe", "gaming cafe", "بلايستيشن", "صالات ألعاب"] },
   { group: "Food & hospitality", items: ["cafe", "restaurant", "catering company", "bakery", "hotel"] },
   { group: "Home services", items: ["cleaning company", "maid service", "laundry", "pest control"] },
   { group: "Health", items: ["dentist", "dental clinic", "pharmacy", "clinic"] },
