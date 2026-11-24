@@ -25,6 +25,12 @@ export type Lead = {
   collectedAt: string;
 };
 
+export type SearchMetrics = {
+  queriesStarted: number; queriesFinished: number; candidates: number;
+  inspected: number; filtered: number; errors: number; duplicates: number;
+};
+export type SearchEvent = { at: string; stage: string; message: string };
+
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export type HarvestJob = {
@@ -45,6 +51,8 @@ export type HarvestJob = {
     percent: number;
     message: string;
     stage: string;
+    metrics?: SearchMetrics;
+    events?: SearchEvent[];
   };
   leads: Lead[];
   error?: string;
