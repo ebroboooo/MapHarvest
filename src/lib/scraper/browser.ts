@@ -89,7 +89,6 @@ export async function launchBrowser(headless = true): Promise<Browser> {
     headless,
     executablePath,
     args: [
-      "--disable-blink-features=AutomationControlled",
       "--no-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
