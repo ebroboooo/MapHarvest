@@ -18,11 +18,14 @@ function ensureDirs() {
 
 function persist(job: HarvestJob) {
   ensureDirs();
+  const target = path.join(JOBS_DIR, `${job.id}.json`);
+  const temp = target + ".tmp";
   fs.writeFileSync(
-    path.join(JOBS_DIR, `${job.id}.json`),
+    temp,
     JSON.stringify(job, null, 2),
     "utf8",
   );
+  fs.renameSync(temp, target);
 }
 
 function emit(job: HarvestJob) {
@@ -46,11 +49,17 @@ export function subscribe(jobId: string, fn: (job: HarvestJob) => void) {
 }
 
 export function getJob(id: string): HarvestJob | undefined {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return undefined;
   if (jobs.has(id)) return jobs.get(id);
   const file = path.join(JOBS_DIR, `${id}.json`);
   if (!fs.existsSync(file)) return undefined;
   try {
     const job = JSON.parse(fs.readFileSync(file, "utf8")) as HarvestJob;
+    if (job.status === "queued" || job.status === "running") {
+      job.status = "failed";
+      job.progress = {...job.progress, stage:"interrupted", message:"Search interrupted by server restart. Partial results preserved."};
+      persist(job);
+    }
     jobs.set(id, job);
     return job;
   } catch {
@@ -167,6 +176,8 @@ async function runJob(id: string) {
             percent,
             message: update.message,
             stage: update.stage,
+            metrics: update.metrics,
+            events: [...(latest.progress.events ?? []), {at: new Date().toISOString(), stage:update.stage, message:update.message}].slice(-80),
           },
         });
       },
@@ -184,16 +195,17 @@ async function runJob(id: string) {
       updatedAt: new Date().toISOString(),
       leads,
       progress: {
+        ...latest.progress,
         collected: leads.length,
         target: latest.maxResults,
-        percent: 100,
-        message: `Done · ${leads.length} leads`,
+        percent: Math.min(100, Math.round(leads.length / Math.max(1,latest.maxResults) * 100)),
+        message: `Done · ${leads.length}/${latest.maxResults} leads · ${leads.length >= latest.maxResults ? "Target reached" : "Search exhausted"}`,
         stage: "completed",
       },
     });
   } catch (err) {
     const latest = getJob(id);
-    if (!latest) return;
+    if (!latest || latest.status === "cancelled") return;
     emit({
       ...latest,
       status: "failed",
