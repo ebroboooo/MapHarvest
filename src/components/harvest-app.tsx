@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ProgressBar } from "@/components/progress-bar";
+import { SalesProspects } from "@/components/sales-prospects";
 import { COUNTRY_OPTIONS, NICHE_OPTIONS } from "@/lib/scraper/locations";
 import type { ContactMode, HarvestJob } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -15,11 +16,11 @@ const CONTACT_OPTIONS: Array<{
   { value: "phone", title: "Phone", hint: "Must include phone" },
   { value: "website", title: "Website", hint: "Must include website" },
   { value: "phone_website", title: "Phone + website", hint: "Both required" },
-  { value: "no_website", title: "No website", hint: "Best freelancing leads" },
+  { value: "no_website", title: "No website", hint: "No site listed" },
   {
     value: "phone_no_website",
     title: "Phone · no website",
-    hint: "Callable + needs a site",
+    hint: "Phone listed; no site listed",
   },
 ];
 
@@ -27,6 +28,7 @@ const MAX_OPTIONS = [25, 50, 100, 250, 500, 1000];
 
 export function HarvestApp() {
   const [keyword, setKeyword] = useState("");
+  const [customKeyword, setCustomKeyword] = useState("");
   const [country, setCountry] = useState("Saudi Arabia");
   const [city, setCity] = useState("");
   const [maxResults, setMaxResults] = useState(50);
@@ -36,11 +38,14 @@ export function HarvestApp() {
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<HarvestJob | null>(null);
   const [browsersReady, setBrowsersReady] = useState(true);
+  const [clock,setClock] = useState(Date.now());
+  const [connected,setConnected] = useState(false);
+  useEffect(()=>{const timer=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(timer);},[]);
 
   useEffect(() => {
     fetch("/api/harvest")
       .then((r) => r.json())
-      .then((d) => setBrowsersReady(Boolean(d.browsersReady)))
+      .then((d) => {setBrowsersReady(Boolean(d.browsersReady)); setJob(prev=>prev??d.jobs?.[0]??null);})
       .catch(() => setBrowsersReady(false));
   }, []);
 
@@ -48,24 +53,30 @@ export function HarvestApp() {
     if (!job?.id) return;
     if (job.status !== "running" && job.status !== "queued") return;
 
+    const accept = (incoming: HarvestJob) => setJob(prev => prev?.id === incoming.id && prev.updatedAt > incoming.updatedAt ? prev : incoming);
+    let disposed=false;
     const pull = () =>
       fetch(`/api/harvest/${job.id}`)
         .then((r) => r.json())
-        .then((d) => d.job && setJob(d.job as HarvestJob))
-        .catch(() => undefined);
+        .then((d) => {if (!disposed && d.job) {accept(d.job as HarvestJob);setConnected(true);}})
+        .catch(() => {if(!disposed)setConnected(false);});
 
     const es = new EventSource(`/api/harvest/${job.id}/stream`);
+    es.onopen=()=>setConnected(true);
+    es.onerror=()=>setConnected(false);
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        if (data.job) setJob(data.job as HarvestJob);
+        if (!disposed && data.job) {accept(data.job as HarvestJob);setConnected(true);}
       } catch {
         /* ignore */
       }
     };
 
+    void pull();
     const poll = setInterval(pull, 1500);
     return () => {
+      disposed=true;
       es.close();
       clearInterval(poll);
     };
@@ -84,7 +95,8 @@ export function HarvestApp() {
 
   async function onStart(e: React.FormEvent) {
     e.preventDefault();
-    if (!keyword) {
+    const selectedKeyword = (keyword === "__custom" ? customKeyword : keyword).trim();
+    if (!selectedKeyword) {
       setError("Choose a business niche");
       return;
     }
@@ -95,7 +107,7 @@ export function HarvestApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keyword,
+          keyword: selectedKeyword,
           country,
           city: city || undefined,
           maxResults,
@@ -115,7 +127,7 @@ export function HarvestApp() {
 
   async function onCancel() {
     if (!job) return;
-    await fetch(`/api/harvest/${job.id}`, { method: "DELETE" });
+    try { const res=await fetch(`/api/harvest/${job.id}`, { method: "DELETE" }); if(!res.ok)throw Error("Cancel failed"); const next=await fetch(`/api/harvest/${job.id}`).then(r=>r.json()); if(next.job)setJob(next.job); } catch(e){setError(e instanceof Error?e.message:"Cancel failed");}
   }
 
   return (
@@ -125,14 +137,19 @@ export function HarvestApp() {
           MapHarvest
         </p>
         <h1 className="mt-3 font-display text-4xl font-semibold tracking-tight text-ink-950 sm:text-5xl">
-          Find businesses on Maps
+          MapHarvest · Sales Command Center
         </h1>
         <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-ink-700/70">
           Pick a niche, location, and what contact info you need. Watch leads
-          fill live — then export CSV.
+          fill live — then export CSV. Use only data sources you have permission to collect from.
         </p>
       </header>
 
+      <div className="mb-5 rounded-xl border bg-white p-4 text-sm">
+        <strong>LoungeLink POS campaign</strong>
+        <p className="my-2">Use the sales workspace below to track verified public business listings. A listing is not a confirmed buyer.</p>
+        <button type="button" disabled={busy || running} onClick={()=>{setKeyword("playstation gaming lounge");setCountry("Egypt");setCity("Cairo");setContactMode("phone");setMaxResults(25);setWorkers(1);}} className="rounded-lg bg-ink-950 px-4 py-2 text-white disabled:opacity-50">Set LoungeLink search filters</button>
+      </div>
       <div className="grid gap-5 lg:grid-cols-[1fr_0.92fr]">
         <form
           onSubmit={onStart}
@@ -157,6 +174,7 @@ export function HarvestApp() {
                 <option value="" disabled>
                   Select niche…
                 </option>
+                <option value="__custom">Custom business keyword…</option>
                 {NICHE_OPTIONS.map((g) => (
                   <optgroup key={g.group} label={g.group}>
                     {g.items.map((item) => (
@@ -167,6 +185,7 @@ export function HarvestApp() {
                   </optgroup>
                 ))}
               </select>
+              {keyword === "__custom" && <input required maxLength={100} className="h-12 w-full rounded-xl border bg-sand-50 px-3 text-sm" placeholder="e.g. PlayStation cafe or بلايستيشن" value={customKeyword} onChange={e=>setCustomKeyword(e.target.value)}/>}
             </li>
 
             <li className="space-y-2">
@@ -314,7 +333,7 @@ export function HarvestApp() {
         </form>
 
         <aside className="rounded-[28px] border border-ink-900/10 bg-ink-950 p-6 text-sand-50 shadow-panel sm:p-7">
-          <h2 className="font-display text-2xl font-semibold">Live results</h2>
+          <h2 className="font-display text-2xl font-semibold">Live search monitor</h2>
           {!job ? (
             <p className="mt-3 text-sm text-sand-200/65">
               Your progress bar and leads appear here when you start.
@@ -326,7 +345,18 @@ export function HarvestApp() {
                 target={job.progress.target}
                 running={running}
               />
-              <p className="text-sm text-sand-100/75">{job.progress.message}</p>
+              <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-white/10 px-3 py-1">{job.status.toUpperCase()}</span><span className="rounded-full bg-white/10 px-3 py-1">{running ? (connected?"Connected":"Connecting / reconnecting"):"Stopped"}</span><span className="rounded-full bg-white/10 px-3 py-1">{Math.max(0,Math.floor(((running?clock:Date.parse(job.updatedAt))-Date.parse(job.createdAt))/1000))}s elapsed</span></div>
+              <p className="text-sm text-sand-100/75" role="status">{job.progress.message}</p>
+              {running && clock-Date.parse(job.updatedAt)>30000 && <p className="rounded-lg bg-amber-500/15 p-2 text-xs text-amber-200">No new activity for {Math.floor((clock-Date.parse(job.updatedAt))/1000)}s. Browser may be waiting for a page or network response.</p>}
+              {job.progress.metrics && <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">{[
+                ["Queries finished",job.progress.metrics.queriesFinished+" / "+job.progress.metrics.queriesStarted],
+                ["Unique queued",job.progress.metrics.candidates],
+                ["Inspected",job.progress.metrics.inspected],
+                ["Filtered",job.progress.metrics.filtered],
+                ["Duplicates skipped",job.progress.metrics.duplicates],
+                ["Errors",job.progress.metrics.errors]
+              ].map(([label,value])=><div key={label} className="rounded-xl bg-white/10 p-2"><div className="text-lg font-semibold">{value}</div><div className="text-xs text-sand-200/70">{label}</div></div>)}</div>}
+              <div className="rounded-xl border border-white/10 bg-black/20 p-3"><h3 className="mb-2 text-sm font-semibold">Live activity</h3><div className="max-h-52 overflow-y-auto space-y-2 font-mono text-xs">{(job.progress.events??[]).slice().reverse().map((event,i)=><div key={event.at+"-"+i} className="border-b border-white/5 pb-1"><span className="text-sand-200/60">{new Date(event.at).toLocaleTimeString()} · {event.stage}</span><div className="break-words">{event.message}</div></div>)}</div>{!job.progress.events?.length&&<p className="text-xs text-sand-200/60">Activity details appear once a new search begins.</p>}</div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-2xl bg-white/5 py-3">
                   <div className="text-lg font-semibold">{stats.withPhone}</div>
@@ -420,6 +450,7 @@ export function HarvestApp() {
           </div>
         </section>
       ) : null}
+      <SalesProspects discovered={job?.leads ?? []} />
     </div>
   );
 }

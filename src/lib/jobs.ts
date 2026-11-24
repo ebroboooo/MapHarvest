@@ -8,9 +8,10 @@ import { ensureBrowsersPath } from "./scraper/browser";
 const DATA_DIR = path.join(process.cwd(), "data");
 const JOBS_DIR = path.join(DATA_DIR, "jobs");
 
-const jobs = new Map<string, HarvestJob>();
-const cancelFlags = new Set<string>();
-const listeners = new Map<string, Set<(job: HarvestJob) => void>>();
+// Share live state between Next.js route modules in the local Node process.
+const globalJobs = globalThis as typeof globalThis & { __mapHarvestJobs?: { jobs: Map<string, HarvestJob>; cancelFlags: Set<string>; listeners: Map<string, Set<(job: HarvestJob) => void>> } };
+const live = globalJobs.__mapHarvestJobs ??= { jobs: new Map(), cancelFlags: new Set(), listeners: new Map() };
+const { jobs, cancelFlags, listeners } = live;
 
 function ensureDirs() {
   fs.mkdirSync(JOBS_DIR, { recursive: true });
@@ -18,11 +19,14 @@ function ensureDirs() {
 
 function persist(job: HarvestJob) {
   ensureDirs();
+  const target = path.join(JOBS_DIR, `${job.id}.json`);
+  const temp = target + ".tmp";
   fs.writeFileSync(
-    path.join(JOBS_DIR, `${job.id}.json`),
+    temp,
     JSON.stringify(job, null, 2),
     "utf8",
   );
+  fs.renameSync(temp, target);
 }
 
 function emit(job: HarvestJob) {
@@ -46,11 +50,17 @@ export function subscribe(jobId: string, fn: (job: HarvestJob) => void) {
 }
 
 export function getJob(id: string): HarvestJob | undefined {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return undefined;
   if (jobs.has(id)) return jobs.get(id);
   const file = path.join(JOBS_DIR, `${id}.json`);
   if (!fs.existsSync(file)) return undefined;
   try {
     const job = JSON.parse(fs.readFileSync(file, "utf8")) as HarvestJob;
+    if (job.status === "queued" || job.status === "running") {
+      job.status = "failed";
+      job.progress = {...job.progress, stage:"interrupted", message:"Search interrupted by server restart. Partial results preserved."};
+      persist(job);
+    }
     jobs.set(id, job);
     return job;
   } catch {
@@ -167,6 +177,8 @@ async function runJob(id: string) {
             percent,
             message: update.message,
             stage: update.stage,
+            metrics: update.metrics,
+            events: [...(latest.progress.events ?? []), {at: new Date().toISOString(), stage:update.stage, message:update.message}].slice(-80),
           },
         });
       },
@@ -184,16 +196,17 @@ async function runJob(id: string) {
       updatedAt: new Date().toISOString(),
       leads,
       progress: {
+        ...latest.progress,
         collected: leads.length,
         target: latest.maxResults,
-        percent: 100,
-        message: `Done · ${leads.length} leads`,
+        percent: Math.min(100, Math.round(leads.length / Math.max(1,latest.maxResults) * 100)),
+        message: `Done · ${leads.length}/${latest.maxResults} leads · ${leads.length >= latest.maxResults ? "Target reached" : "Search exhausted"}`,
         stage: "completed",
       },
     });
   } catch (err) {
     const latest = getJob(id);
-    if (!latest) return;
+    if (!latest || latest.status === "cancelled") return;
     emit({
       ...latest,
       status: "failed",
@@ -224,7 +237,8 @@ export function leadsToCsv(leads: HarvestJob["leads"]): string {
     "mapsUrl",
   ] as const;
   const esc = (v: string | number | undefined) => {
-    const s = v == null ? "" : String(v);
+    const raw = v == null ? "" : String(v);
+    const s = /^[\s]*[=+\-@]/.test(raw) ? "'" + raw : raw;
     if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };

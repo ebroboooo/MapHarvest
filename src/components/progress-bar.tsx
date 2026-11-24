@@ -22,18 +22,18 @@ export function ProgressBar({
     <div className={cn("space-y-2", className)}>
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-700/60">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-sand-200/70">
             Leads collected
           </p>
-          <p className="mt-1 font-display text-3xl font-semibold tracking-tight text-ink-950">
+          <p className="mt-1 font-display text-3xl font-semibold tracking-tight text-sand-50">
             {Math.min(collected, target)}
-            <span className="mx-1 text-xl font-medium text-ink-700/45">/</span>
+            <span className="mx-1 text-xl font-medium text-sand-200/60">/</span>
             {target}
           </p>
         </div>
-        <p className="font-mono text-sm tabular-nums text-ink-700/70">{pct}%</p>
+        <p className="font-mono text-sm tabular-nums text-sand-100">{pct}%</p>
       </div>
-      <div className="h-3 overflow-hidden rounded-full bg-ink-900/10 ring-1 ring-ink-900/5">
+      <div role="progressbar" aria-label="Qualified leads collected" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} className="h-3 overflow-hidden rounded-full bg-white/15 ring-1 ring-white/10">
         <div
           className={cn(
             "h-full rounded-full transition-[width] duration-500 ease-out",
