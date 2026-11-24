@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Lead } from "@/lib/types";
 
 const STATUSES = ["New", "Contacted", "Interested", "Demo booked", "Won", "Not interested", "Do not contact"] as const;
 type Status = typeof STATUSES[number];
@@ -17,7 +18,7 @@ function valid(value: unknown): value is Prospect {
     STATUSES.includes(p.status) && p.phone.replace(/\D/g,"").length >= 7 &&
     (p.whatsappConsent === undefined || typeof p.whatsappConsent === "string");
 }
-const identity = (p: Prospect) => p.phone.replace(/\D/g,"").replace(/^20(?=1\d{9}$)/,"0") + "|" + p.name.trim().toLowerCase();
+const identity = (p: Pick<Prospect,"phone"|"name">) => p.phone.replace(/\D/g,"").replace(/^20(?=1\d{9}$)/,"0") + "|" + p.name.trim().toLowerCase();
 function egyptWhatsAppNumber(phone: string): string | null {
   const digits = phone.replace(/\D/g, "");
   const local = digits.replace(/^0020/, "0").replace(/^20(?=1\d{9}$)/, "0");
@@ -29,7 +30,7 @@ function canOpenWhatsApp(p: Prospect) {
     !["Not interested", "Do not contact", "Won"].includes(p.status);
 }
 
-export function SalesProspects() {
+export function SalesProspects({ discovered = [] }: { discovered?: Lead[] }) {
   const [rows, setRows] = useState<Prospect[]>([]);
   const [ready,setReady] = useState(false);
   const [message,setMessage] = useState("");
@@ -39,11 +40,13 @@ export function SalesProspects() {
   const [campaignIds,setCampaignIds] = useState<string[]>([]);
   const [handledIds,setHandledIds] = useState<string[]>([]);
   const selected = rows.find(p=>p.id===selectedId);
-  const eligible = rows.filter(p=>p.status==="New"&&canOpenWhatsApp(p));
-  const pending = campaignIds.map(id=>rows.find(p=>p.id===id)).filter((p): p is Prospect=>!!p && p.status==="New" && canOpenWhatsApp(p) && !handledIds.includes(p.id));
+  const excludedNumbers = new Set(rows.filter(p=>["Not interested","Do not contact"].includes(p.status)).map(p=>egyptWhatsAppNumber(p.phone)).filter(Boolean));
+  const canContact=(p: Prospect)=>canOpenWhatsApp(p)&&!excludedNumbers.has(egyptWhatsAppNumber(p.phone));
+  const eligible = rows.filter((p,i)=>p.status==="New"&&canContact(p)&&!rows.slice(0,i).some(previous=>previous.status==="New"&&canContact(previous)&&egyptWhatsAppNumber(previous.phone)===egyptWhatsAppNumber(p.phone)));
+  const pending = campaignIds.map(id=>rows.find(p=>p.id===id)).filter((p): p is Prospect=>!!p && p.status==="New" && canContact(p) && !handledIds.includes(p.id));
   function personalize(p: Prospect){return template.replaceAll("{business}",p.name).replaceAll("{area}",p.area);}
   function openDraft(p: Prospect){setSelectedId(p.id);setDraft(personalize(p));}
-  function finishDraft(sent: boolean){if(!selected)return;if(sent&&canOpenWhatsApp(selected)&&selected.status==="New"){setRows(prev=>prev.map(p=>p.id===selected.id?{...p,status:"Contacted"}:p));}setHandledIds(prev=>prev.includes(selected.id)?prev:[...prev,selected.id]);setSelectedId(null);setDraft("");}
+  function finishDraft(sent: boolean){if(!selected)return;if(sent&&canContact(selected)&&selected.status==="New"){setRows(prev=>prev.map(p=>p.id===selected.id?{...p,status:"Contacted"}:p));}setHandledIds(prev=>prev.includes(selected.id)?prev:[...prev,selected.id]);setSelectedId(null);setDraft("");}
   useEffect(()=>{
     try { const stored=JSON.parse(localStorage.getItem(KEY)||"[]"); if(Array.isArray(stored))setRows(stored.filter(valid)); }
     catch { setMessage("Saved prospect data could not be read."); }
@@ -66,6 +69,14 @@ export function SalesProspects() {
     }catch(e){setMessage(e instanceof Error?e.message:"Import failed");}
   };
   const update=(id:string,changes:Partial<Pick<Prospect,"status"|"notes"|"whatsappConsent">>)=>setRows(prev=>prev.map(p=>p.id===id?{...p,...changes}:p));
+  function addReviewedLead(lead: Lead){
+    if(!lead.phone || !lead.mapsUrl.startsWith("https://"))return;
+    if(!window.confirm("Have you checked this public business listing and its phone number, and confirmed it is relevant to LoungeLink? Adding it does not grant WhatsApp permission."))return;
+    const p: Prospect={id:lead.id,name:lead.name,area:lead.city??lead.address??lead.country,phone:lead.phone,source:lead.mapsUrl,fit:"Listing reviewed by operator; buyer interest unconfirmed.",status:"New",notes:""};
+    if(!valid(p))return;
+    setRows(prev=>prev.some(x=>x.id===p.id||identity(x)===identity(p))?prev:[...prev,p]);
+    setMessage("Reviewed prospect saved. Contact status: New; WhatsApp permission not granted.");
+  }
   function download(){
     const url=URL.createObjectURL(new Blob([JSON.stringify(rows,null,2)],{type:"application/json"}));
     const a=document.createElement("a");a.href=url;a.download="loungelink-prospects.json";a.click();URL.revokeObjectURL(url);
@@ -78,6 +89,11 @@ export function SalesProspects() {
       <button type="button" disabled={!rows.length} onClick={download} className="rounded-xl bg-ink-950 text-white px-4 py-2 text-sm disabled:opacity-50">Export prospect tracker</button>
     </div>
     {message&&<p role="status" className="text-sm text-ink-700">{message}</p>}
+    {discovered.some(l=>l.phone)&&<section className="rounded-xl border p-4 space-y-2">
+      <h3 className="font-semibold">Review discovered businesses</h3>
+      <p className="text-xs text-ink-700">Check the actual listing and phone before saving to the sales workspace. No outreach permission is inferred.</p>
+      <div className="max-h-64 overflow-y-auto space-y-2">{discovered.filter(l=>l.phone).map(l=><div key={l.id} className="flex flex-wrap justify-between items-center gap-2 border-b py-2 text-sm"><div><strong>{l.name}</strong><p className="text-xs">{l.phone} · {l.city??l.country}</p></div><div className="flex gap-2"><a href={l.mapsUrl} target="_blank" rel="noopener noreferrer" className="underline">Verify listing</a><button type="button" disabled={rows.some(p=>p.id===l.id||identity(p)===identity({name:l.name,phone:l.phone??""}))} onClick={()=>addReviewedLead(l)} className="border rounded px-2 py-1 disabled:opacity-40">Save reviewed prospect</button></div></div>)}</div>
+    </section>}
     <section className="rounded-2xl border bg-sand-50 p-4 space-y-3">
       <h3 className="font-semibold text-lg">Outreach campaign composer</h3>
       <p className="text-sm text-ink-700">Prepare one template for opted-in prospects. Use {"{business}"} and {"{area}"} for personalization. No automatic messages are sent; verify each recipient and send inside WhatsApp.</p>
@@ -104,7 +120,7 @@ export function SalesProspects() {
           <label className="block text-xs">WhatsApp permission (how / when granted)
             <input className="w-full border rounded p-1 mt-1" value={p.whatsappConsent??""} placeholder="Not granted" maxLength={300} disabled={["Do not contact","Not interested","Won"].includes(p.status)} onChange={e=>update(p.id,{whatsappConsent:e.target.value})}/>
           </label>
-          <button type="button" disabled={!canOpenWhatsApp(p)} className="mt-2 rounded-lg bg-emerald-700 text-white px-3 py-2 text-xs disabled:opacity-40" onClick={()=>{
+          <button type="button" disabled={!canContact(p)} className="mt-2 rounded-lg bg-emerald-700 text-white px-3 py-2 text-xs disabled:opacity-40" onClick={()=>{
             openDraft(p);
           }}>Prepare WhatsApp draft</button>
           {!egyptWhatsAppNumber(p.phone)&&<p className="text-xs">Egyptian mobile number required; verify separately.</p>}
@@ -116,8 +132,8 @@ export function SalesProspects() {
       <p className="text-xs">Review recipient and message. Opening a chat does not send anything or update the sales status.</p>
       <textarea dir="auto" className="w-full rounded border p-2 text-sm" rows={5} maxLength={1500} value={draft} onChange={e=>setDraft(e.target.value)}/>
       <div className="flex flex-wrap gap-2 items-center">
-        {canOpenWhatsApp(selected)&&draft.trim()&&<a className="rounded-lg bg-emerald-700 px-3 py-2 text-white text-sm" href={"https://wa.me/"+egyptWhatsAppNumber(selected.phone)+"?text="+encodeURIComponent(draft)} target="_blank" rel="noopener noreferrer">Open WhatsApp — review and send</a>}
-        <button type="button" disabled={!canOpenWhatsApp(selected)||!draft.trim()||selected.status!=="New"} className="rounded-lg bg-ink-950 text-white px-3 py-2 text-sm disabled:opacity-40" onClick={()=>{if(window.confirm("Have you actually sent the reviewed message in WhatsApp?"))finishDraft(true);}}>Confirm sent manually</button>
+        {canContact(selected)&&draft.trim()&&<a className="rounded-lg bg-emerald-700 px-3 py-2 text-white text-sm" href={"https://wa.me/"+egyptWhatsAppNumber(selected.phone)+"?text="+encodeURIComponent(draft)} target="_blank" rel="noopener noreferrer">Open WhatsApp — review and send</a>}
+        <button type="button" disabled={!canContact(selected)||!draft.trim()||selected.status!=="New"} className="rounded-lg bg-ink-950 text-white px-3 py-2 text-sm disabled:opacity-40" onClick={()=>{if(window.confirm("Have you actually sent the reviewed message in WhatsApp?"))finishDraft(true);}}>Confirm sent manually</button>
         <button type="button" className="border rounded px-3 py-2 text-sm" onClick={()=>finishDraft(false)}>Skip for now</button>
         <button type="button" className="border rounded px-3 py-2 text-sm" onClick={()=>{setSelectedId(null);setDraft("");}}>Close</button>
       </div>
