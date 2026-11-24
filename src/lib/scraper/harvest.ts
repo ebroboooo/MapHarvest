@@ -6,7 +6,7 @@ import {
   queryVariants,
   resolveCities,
 } from "./locations";
-import type { ContactMode, Lead } from "../types";
+import type { ContactMode, Lead, SearchMetrics } from "../types";
 
 const REQUEST_GAP_MS = 450;
 const SCROLL_PAUSE_MS = 1200;
@@ -55,6 +55,7 @@ export type HarvestParams = {
     message: string;
     stage: string;
     lead?: Lead;
+    metrics: SearchMetrics;
   }) => void | Promise<void>;
   shouldCancel?: () => boolean;
 };
@@ -184,14 +185,14 @@ async function searchMaps(page: Page, query: string) {
     .catch(() => undefined);
 }
 
-async function harvestFeed(page: Page, maxNeeded: number): Promise<FeedCard[]> {
+async function harvestFeed(page: Page, maxNeeded: number, onScroll: (count: number, scroll: number) => Promise<void>, shouldCancel?: () => boolean): Promise<FeedCard[]> {
   const byKey = new Map<string, FeedCard>();
   const feed = page.locator('div[role="feed"]').first();
   if ((await feed.count()) === 0) return [];
 
   let stagnant = 0;
   let last = 0;
-  for (let i = 0; i < MAX_SCROLLS && byKey.size < maxNeeded; i++) {
+  for (let i = 0; i < MAX_SCROLLS && byKey.size < maxNeeded && !shouldCancel?.(); i++) {
     const links = page.locator('div[role="feed"] a[href*="/maps/place/"]');
     const count = await links.count();
     for (let j = 0; j < count; j++) {
@@ -223,6 +224,7 @@ async function harvestFeed(page: Page, maxNeeded: number): Promise<FeedCard[]> {
         ...extractCoords(absolute),
       });
     }
+    await onScroll(byKey.size, i + 1);
     const end = await page
       .getByText(/you've reached the end of the list|end of the list/i)
       .count()
@@ -334,6 +336,7 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
     { phone?: string; website?: string; address?: string }
   >();
 
+  const metrics: SearchMetrics = { queriesStarted:0, queriesFinished:0, candidates:0, inspected:0, filtered:0, errors:0, duplicates:0 };
   const report = async (stage: string, message: string, lead?: Lead) => {
     await params.onProgress?.({
       collected: out.length,
@@ -341,6 +344,7 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
       message,
       stage,
       lead,
+      metrics: { ...metrics },
     });
   };
 
@@ -384,16 +388,20 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
           if (harvested.length >= stopAt || out.length >= limit) return;
           if (added >= perLocationCap) break;
           await sleep(jitter(REQUEST_GAP_MS));
+          metrics.queriesStarted++;
           await report("searching", `Maps: ${q} · ${out.length}/${limit}`);
           try {
             await searchMaps(page, q);
             const cards = await harvestFeed(
               page,
               Math.min(perLocationCap - added + 25, 160),
+              (count, scroll) => report("scrolling", `${location}: scroll ${scroll}, ${count} visible unique candidates in this query`),
+              params.shouldCancel,
             );
             for (const card of cards) {
               if (harvested.length >= stopAt || added >= perLocationCap) break;
-              if (seen.has(card.placeKey) || isJunk(card.name)) continue;
+              if (seen.has(card.placeKey)) { metrics.duplicates++; continue; }
+              if (isJunk(card.name)) continue;
               seen.add(card.placeKey);
               harvested.push({
                 ...card,
@@ -401,11 +409,18 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
                 searchQuery: q,
               });
               added += 1;
+              metrics.candidates++;
             }
+            await report("discovered", `${location}: ${cards.length} candidates in query, ${metrics.candidates} unique queued overall`);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
+            metrics.errors++;
+            await report("warning", `${location}: ${msg.slice(0, 180)}`);
             if (/Timeout|net::|closed/i.test(msg)) continue;
             throw err;
+          } finally {
+            metrics.queriesFinished++;
+            await report("query_finished", `Query finished: ${location}`);
           }
         }
       }
@@ -418,11 +433,12 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
         const card = harvested[idx]!;
         if (enriched.has(card.placeKey)) continue;
         try {
+          await report("inspecting", `Checking listing: ${card.name}`);
           const detail = await openPlaceDetail(page, card);
+          metrics.inspected++;
           enriched.set(card.placeKey, detail);
           if (out.length >= limit) return;
-          if (isJunk(card.name, detail.website)) continue;
-          if (!passesMode(mode, detail)) continue;
+          if (isJunk(card.name, detail.website) || !passesMode(mode, detail)) { metrics.filtered++; await report("filtered", `Excluded: ${card.name} (contact or listing filter)`); continue; }
           const lead: Lead = {
             id: randomUUID(),
             name: card.name,
@@ -447,8 +463,10 @@ export async function harvestMaps(params: HarvestParams): Promise<Lead[]> {
             lead,
           );
           await sleep(jitter(Math.max(220, REQUEST_GAP_MS / 2)));
-        } catch {
+        } catch (err) {
+          metrics.errors++;
           enriched.set(card.placeKey, {});
+          await report("warning", `Could not inspect ${card.name}: ${err instanceof Error ? err.message.slice(0,120) : "unknown error"}`);
         }
       }
     }
