@@ -8,9 +8,10 @@ import { ensureBrowsersPath } from "./scraper/browser";
 const DATA_DIR = path.join(process.cwd(), "data");
 const JOBS_DIR = path.join(DATA_DIR, "jobs");
 
-const jobs = new Map<string, HarvestJob>();
-const cancelFlags = new Set<string>();
-const listeners = new Map<string, Set<(job: HarvestJob) => void>>();
+// Share live state between Next.js route modules in the local Node process.
+const globalJobs = globalThis as typeof globalThis & { __mapHarvestJobs?: { jobs: Map<string, HarvestJob>; cancelFlags: Set<string>; listeners: Map<string, Set<(job: HarvestJob) => void>> } };
+const live = globalJobs.__mapHarvestJobs ??= { jobs: new Map(), cancelFlags: new Set(), listeners: new Map() };
+const { jobs, cancelFlags, listeners } = live;
 
 function ensureDirs() {
   fs.mkdirSync(JOBS_DIR, { recursive: true });
@@ -236,7 +237,8 @@ export function leadsToCsv(leads: HarvestJob["leads"]): string {
     "mapsUrl",
   ] as const;
   const esc = (v: string | number | undefined) => {
-    const s = v == null ? "" : String(v);
+    const raw = v == null ? "" : String(v);
+    const s = /^[\s]*[=+\-@]/.test(raw) ? "'" + raw : raw;
     if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
