@@ -1,0 +1,38 @@
+{
+  "name": "mapharvest",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Professional Google Maps lead harvester — Playwright only",
+  "scripts": {
+    "dev": "next dev -p 3030",
+    "build": "next build",
+    "start": "next start -p 3030",
+    "harvest": "tsx scripts/cli-harvest.ts",
+    "postinstall": "node scripts/ensure-browsers.mjs"
+  },
+  "dependencies": {
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "playwright": "^1.56.1",
+    "uuid": "^11.1.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.8.3",
+    "tsx": "^4.20.5",
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "^15.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

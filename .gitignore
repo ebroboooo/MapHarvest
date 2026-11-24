@@ -1,0 +1,38 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build files
+.next/
+dist/
+build/
+bin/
+
+# Playwright
+.playwright-browsers/
+playwright-report/
+test-results/
+
+# Generated data
+data/jobs/
+output/
+
+# Logs
+*.log
+
+# Accidental terminal files
+clr
+git
+
+# Operating system
+.DS_Store
+Thumbs.db.playwright-browsers/
+bin/
+data/jobs/
+output/
+clr
+git
